@@ -1,0 +1,771 @@
+---
+title: "Unmet Needs in the IBD Population"
+author: "Gemma Postill"
+date: "2022-07-29"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(RColorBrewer)
+library(tableone)
+library(survey)
+library(gtsummary)
+library(pscl)
+library(scales)
+# library(MASS) # Note this package unmasks select from dplyr and wreaks havoc on the code
+library(questionr)
+library(pivottabler)
+library(car)
+library(mctest)
+library(lme4)
+library(mlmhelpr)
+
+```
+
+# Data Preparation
+
+> Loading the data 
+
+```{r setup1, include=FALSE}
+#This line would need to be changed 
+
+
+### IMPORT THE DATASET 
+cchs2014 <- read_csv("CSV NAME")
+
+
+
+```
+
+
+### CLEANING: AGE & SEX VARIABLES 
+
+```{r data cleaning: age and sex}
+cchs20141 <- cchs2014 %>% 
+  mutate(sex = factor(DHH_SEX,
+                      levels = c(1, 2),
+                      labels = c("Male", "Female")))
+
+cchs20141 <- cchs20141 %>% 
+  #This variable is grouping age in categories of 10-years 
+  mutate(age_group = case_when(
+    DHHGAGE == 1 | DHHGAGE == 2 | DHHGAGE == 3 ~ "< 20", #1 = 12-14, 2 = 15-17, 3 = 18-19
+    DHHGAGE == 4 | DHHGAGE == 5 ~ "18 to 29", 
+    DHHGAGE == 6 | DHHGAGE == 7 ~ "30 to 39",
+    DHHGAGE == 8 | DHHGAGE == 9 ~ "40 to 49",
+    DHHGAGE == 10 | DHHGAGE == 11 ~ "50 to 59",
+    DHHGAGE == 12 | DHHGAGE == 13 ~ "60 to 69",
+    DHHGAGE == 14 | DHHGAGE == 15 ~ "70 to 79",
+    DHHGAGE == 16 ~ "80 or older"
+  )) 
+
+cchs20141 <- cchs20141 %>% 
+  #This variable is grouping age in categories of 20-years 
+  mutate(age_group_20s_OG = case_when(
+    DHHGAGE == 1 | DHHGAGE == 2 | DHHGAGE == 3 ~ "< 20", #1 = 12-14, 2 = 15-17, 3 = 18-19
+    DHHGAGE == 4 | DHHGAGE == 5 | DHHGAGE == 6 | DHHGAGE == 7 ~ "20 to 39",
+    DHHGAGE == 8 | DHHGAGE == 9 | DHHGAGE == 10 | DHHGAGE == 11 ~ "40 to 59",
+    DHHGAGE == 12 | DHHGAGE == 13 | DHHGAGE == 14 | DHHGAGE == 15 ~ "60 to 79",
+    DHHGAGE == 16 ~ "80 or older"
+  )) 
+
+#Then we need to EXCLUDE the category of those with age_group = "< 20" & age_group_20s = "< 20" 
+cchs20141<-subset(cchs20141, age_group!="< 20" & age_group_20s_OG!="< 20")
+
+#Displays the results
+cchs20141 %>% count(sex)
+cchs20141 %>% count(age_group)
+cchs20141 %>% count(age_group_20s_OG)
+
+```
+
+### CLEANING: IBD VARIABLE
+
+```{r data cleaning: IBD1}
+cchs20141 <- cchs20141 %>% 
+  mutate(bowel_disease = case_when(
+    CCC_171 == 1 & CCC_17A == 1 ~ "Crohn's disease",
+    CCC_171 == 1 & CCC_17A == 2 ~ "Ulcerative colitis",
+    CCC_171 == 1 & CCC_17A == 3 ~ "Irritable bowel syndrome",
+    CCC_171 == 1 & CCC_17A == 4 ~ "Bowel incontinence",
+    CCC_171 == 1 & CCC_17A == 5 ~ "Other bowel disease",
+    CCC_171 == 2 ~ "No bowel disorder"
+  )) %>% 
+  mutate(ibd_yes = case_when(
+    bowel_disease == "Crohn's disease" | bowel_disease == "Ulcerative colitis" ~ 1,
+    TRUE ~ 0
+  )) %>% 
+  mutate(ibd = case_when(
+    ibd_yes == 1 ~ "IBD Population", 
+    ibd_yes == 0 ~ "General Population", 
+  )) %>% 
+  mutate(ibd_type = case_when(
+    bowel_disease == "Crohn's disease" | bowel_disease == "Ulcerative colitis" ~ bowel_disease,
+  ))
+
+cchs20141 %>% count(bowel_disease)
+cchs20141 %>% count(ibd)
+cchs20141 %>% count(ibd_type)
+
+
+#Then we need to EXCLUDE the category of those with:
+  #bowel_disease != "Crohn's disease"
+  #bowel_disease != "Ulcerative colitis"
+
+#cchs20141<-subset(cchs20141, bowel_disease!="Irritable bowel syndrome" & bowel_disease!="Bowel incontinence"
+#                  & bowel_disease!="Other bowel disease" )
+
+cchs20141<-subset(cchs20141, bowel_disease!="Irritable bowel syndrome") 
+cchs20141<-subset(cchs20141, bowel_disease!="Bowel incontinence") 
+cchs20141<-subset(cchs20141, bowel_disease!="Other bowel disease") 
+
+
+
+```
+
+
+### CLEANING: SES VARIABLES 
+
+```{r data cleaning: SES Variables}
+
+#immigration and ethnicity
+cchs20141 <- cchs20141 %>% 
+  mutate(immigrant = case_when(
+      SDCFIMM == 1 ~ "Immigrant",
+      SDCFIMM == 2 ~ "Non-immigrant", TRUE ~ NA_character_
+    ),
+    cultural_racial_origin = case_when(
+      SDCGCGT == 1 ~ "White",
+      SDCGCGT == 2 ~ "Visible minority", TRUE ~ NA_character_
+    ))
+
+#Home ownership variable
+cchs20141 <- cchs20141 %>% 
+  mutate(
+    home_ownership = case_when(
+      DHH_OWN == 1 ~ "Own home",
+      DHH_OWN == 2 ~ "Rent home"
+    ))
+
+#Marital Status Variable 
+cchs20141 <- cchs20141 %>% 
+  mutate(marital_status = case_when(
+      DHHGMS == 1 |  DHHGMS == 2  ~ "Married or Common-law",
+      DHHGMS == 3 ~ "Widowed, separated, or divorced",
+      DHHGMS == 4 ~ "Single or never marrierd",
+    ))
+
+#Education 
+cchs20141 <- cchs20141 %>% 
+  mutate(education = case_when(
+    EDUDR04 == 1 ~ "Some secondary school",
+    EDUDR04 == 2 ~ "Secondary school",
+    EDUDR04 == 3 ~ "Some post-secondary",
+    EDUDR04 == 4 ~ "Post-secondary certifiate"
+  ))
+
+#Income
+cchs20141 <- cchs20141 %>% 
+  mutate(
+    income_household = case_when(
+      INCGHH == 1 ~ "No income or less than $20,000",
+      INCGHH == 2 ~ "$20,000 to $39,999",
+      INCGHH == 3 ~ "$40,000 to $59,999",
+      INCGHH == 4 ~ "$60,000 to $79,999",
+      INCGHH == 5 ~ "$80,000 or more"
+    ))
+
+#Employment 
+  #GEN_08 "have you worked at a job or business at anytime in the past 12 months (respondents age 15-75 years)" 
+cchs20141 <- cchs20141 %>% 
+  mutate(employed_last_12_months = #The question is have you worked at a job or business at anytime in the past 12 months (respondents age 15-75 years)
+           case_when(
+             GEN_08 == 1 ~ "Yes",
+             GEN_08 == 2 ~ "No or Not applicable", 
+             GEN_08 == 6 ~ "No or Not applicable")  #This is not applicable 
+         )#Note re:coding -- if not known, refusal, or not stated, the variable is left blank 
+
+  #Confirming that all participants with age >=75 years are re-coded as no (vs. missing)
+cchs20141$employed_last_12_months[cchs20141$DHHGAGE > 14] <- "No or Not applicable"
+
+
+
+```
+
+### CLEANING: CHRONIC CONDITION VARIABLES 
+
+> Data cleaning: other chronic conditions variables  
+
+```{r data cleaning: other chronic conditions}
+ cchs20141 <- cchs20141 %>%
+   mutate(
+     asthma = case_when(
+       CCC_031 == 1 ~ "Yes",
+       CCC_031 == 2 ~ "No"
+     ),
+     fibromyalgia = case_when(
+       CCC_041 == 1 ~ "Yes",
+       CCC_041 == 2 ~ "No"
+     ),
+     arthritis = case_when(
+       CCC_051 == 1 ~ "Yes",
+       CCC_051 == 2 ~ "No"
+     ),
+     back_problems = case_when(
+       CCC_061 == 1 ~ "Yes",
+       CCC_061 == 2 ~ "No"
+     ),
+     high_bp = case_when(# Note: this is current blood pressure
+         # There is a separate question about past blood pressure but did not include this one
+       CCC_071 == 1 ~ "Yes",
+       CCC_071 == 2 ~ "No"
+     ),
+     migraine = case_when(
+       CCC_081 == 1 ~ "Yes",
+       CCC_081 == 2 ~ "No"
+     ),
+     copd = case_when(
+       CCC_091 == 1 ~ "Yes",
+       CCC_091 == 2 ~ "No"
+     ),
+     diabetes = case_when(
+       CCC_101 == 1 ~ "Yes",
+       CCC_101 == 2 ~ "No"
+     ),
+     heart_disease = case_when(
+       CCC_121 == 1 ~ "Yes",
+       CCC_121 == 2 ~ "No"
+     ),
+     cancer = case_when(
+         # Note: this is current cancer
+         # There is a separate question about past blood pressure but did not include this one
+       CCC_131 == 1 ~ "Yes",
+       CCC_131 == 2 ~ "No"
+     ),
+     stomach_ulcer = case_when(
+       CCC_141 == 1 ~ "Yes",
+       CCC_141 == 2 ~ "No"
+     ),
+     stroke = case_when(
+       CCC_151 == 1 ~ "Yes",
+       CCC_151 == 2 ~ "No"
+     ),
+
+     urinary_incontinence = case_when(
+       CCC_161 == 1 ~ "Yes",
+       CCC_161 == 2 ~ "No"
+     ),
+
+     ibs = case_when(
+       bowel_disease == "Irritable bowel syndrome" ~ "Yes",
+       !is.na(bowel_disease) & bowel_disease != "Irritable bowel syndrome" ~ "No"
+     ),
+
+     bowel_incontinence = case_when(
+       bowel_disease == "Bowel incontinence" ~ "Yes",
+       !is.na(bowel_disease) & bowel_disease != "Bowel incontinence" ~ "No"
+     ),
+
+     other_bowel = case_when(
+       bowel_disease == "Other bowel disease" ~ "Yes",
+       !is.na(bowel_disease) & bowel_disease != "Irritable bowel syndrome" ~ "No"
+     ),
+
+     non_ibd_bowel = case_when(
+       ibd == 0 & bowel_disease == "No bowel disorder" ~ "No",
+       ibd == 1 ~ "No",
+       ibd == 0 & !is.na(bowel_disease) ~ "Yes"
+     ),
+
+     scoliosis = case_when(
+       CCC_173 == 1 ~ "Yes",
+       CCC_173 == 2 ~ "No"
+     ),
+
+     chronic_fatigue = case_when(
+       CCC_251 == 1 ~ "Yes",
+       CCC_251 == 2 ~ "No"
+     ),
+
+     chemical_sensitivities = case_when(
+       CCC_261 == 1 ~ "Yes",
+       CCC_261 == 2 ~ "No"
+     ),
+
+     mood_disorder = case_when(
+       CCC_280 == 1 ~ "Yes",
+       CCC_280 == 2 ~ "No"
+     ),
+
+     anxiety = case_when(
+       CCC_290 == 1 ~ "Yes",
+       CCC_290 == 2 ~ "No"
+     ),
+
+     mood_anxiety = case_when(
+       mood_disorder == "Yes" | anxiety == "Yes" ~ "Yes",
+       mood_disorder == "No" & anxiety == "No" ~ "No"
+     )) %>%
+
+   rowwise() %>%
+   mutate(number_chronic_conditions =
+            sum(c_across(c(asthma,
+                           fibromyalgia,
+                           arthritis,
+                           back_problems,
+                           scoliosis,
+                           high_bp,
+                           migraine,
+                           copd,
+                           diabetes,
+                           stomach_ulcer,
+                           heart_disease,
+                           cancer,
+                           stroke,
+                           urinary_incontinence,
+                           mood_disorder,
+                           anxiety
+            ))=="Yes", na.rm = TRUE),
+          #Creating a variable that counts the number of chronic conditions 
+          number_chronic_conditions_cat = case_when(
+            number_chronic_conditions == 0 ~ "0",
+            number_chronic_conditions == 1 ~ "1",
+            number_chronic_conditions >= 2 ~ "2 or more"
+          ))
+```
+
+
+
+### CLEANING: UNMET HEALTHCARE NEED VARIABLES 
+
+> Unmet healthcare need within the past 12 mo + WHY
+
+```{r data cleaning: Unmet need in the past 12 mo1}
+cchs20141 <- cchs20141 %>% 
+  mutate(unmet_12mo = case_when(
+    UCN_010 == 1 ~ "Unmet care need in the past 12 mo",
+    UCN_010 == 2 ~ "No unmet care need in the past 12 mo",
+  )) %>% 
+    mutate(unmet_12mo_binary = case_when(
+    UCN_010 == 1 ~ 1,
+    UCN_010 == 2 ~ 0 ,
+  )) 
+
+cchs20141 %>% count(unmet_12mo) 
+```
+
+
+### CLEANING: REGULAR/IMMEDIATE HEALTHCARE USAGE 
+
+```{r, cleaning has a regular medical doctor}
+
+cchs20141 <- cchs20141 %>% 
+  mutate(regular_doctor = case_when(
+    HCU_1AA == 1 ~ 1, 
+    HCU_1AA == 2 ~ 0
+  )) %>%
+  mutate(regular_doctor_Yes = case_when(
+    HCU_1AA == 1 ~ "Yes", 
+    HCU_1AA == 2 ~ "No"
+  )) 
+
+cchs20141 %>% count(regular_doctor_Yes) 
+
+```
+
+
+### CLEANING: CONSULTED HEALTHCARE PROFESSIONAL
+
+```{r, type of healthcare professionals that one consults}
+
+cchs20141 <- cchs20141 %>% 
+  mutate(consult_family = case_when(
+    CHP_03 == 1 ~ "Yes",
+    CHP_03 == 2 ~ "No" 
+  )) %>%
+  mutate(consult_eye = case_when(
+    CHP_06 == 1 ~ "Yes",
+    CHP_06 == 2 ~ "No" 
+  )) %>%
+  mutate(consult_specialist = case_when(
+    CHP_08 == 1 ~ "Yes",
+    CHP_08 == 2 ~ "No" 
+  )) %>%
+  mutate(consult_dentist = case_when(
+    CHP_14 == 1 ~ "Yes",
+    CHP_14 == 2 ~ "No"
+  )) %>%
+  mutate(consult_chiropractor = case_when(
+    CHP_16 == 1 ~ "Yes",
+    CHP_16 == 2 ~ "No"
+  )) %>%  mutate(consult_physiotherapist = case_when(
+    CHP_18 == 1 ~ "Yes",
+    CHP_18 == 2 ~ "No"
+  )) %>%
+  mutate(consult_psychologist = case_when(
+    CHP_20 == 1 ~ "Yes",
+    CHP_20 == 2 ~ "No"
+  )) 
+
+
+```
+
+
+
+### TABLE 1: CONSULTED HEALTHCARE PROFESSIONAL
+
+```{r, cross-tab by sex}
+
+# Create the survey design object
+survey_design <- svydesign(~1, data = cchs20141, weights = ~WTS_M)
+
+# Define the variables to include in the table
+vars <- c("sex", "age_group_20s_OG", "bowel_disease", "immigrant","cultural_racial_origin", "home_ownership", "marital_status", "education", 
+          "number_chronic_conditions_cat", "income_household", "employed_last_12_months", "unmet_12mo",
+          "regular_doctor_Yes","consult_family","consult_specialist",  "consult_psychologist", "consult_eye", "consult_dentist", "consult_chiropractor", 
+          "consult_physiotherapist")
+
+# Create the TableOne object
+table_one <- svyCreateTableOne(
+  vars = vars,
+  strata = "ibd",
+  data = survey_design,
+  test = FALSE)
+
+# Print the table
+print(table_one, smd = TRUE)
+
+# Convert the TableOne object to a data frame
+table_one_df <- as.data.frame(print(table_one, smd=TRUE, showAllLevels=TRUE, quote=FALSE, noSpaces=TRUE), row.names=TRUE)
+
+# Export the data frame to a CSV file
+write.csv(table_one_df, "table1_WEIGHTED.csv", row.names = TRUE)
+
+
+####### NON-WEIGHTED 
+
+# Create the TableOne object
+table1_NoWeight <- CreateTableOne(
+                        vars = vars,
+                        strata = "ibd",
+                        data = cchs20141,
+                        test = FALSE)
+
+# Convert the TableOne object to a data frame
+table1_NoWeight_df <- as.data.frame(print(table1_NoWeight, smd=TRUE, showAllLevels=TRUE, quote=FALSE, noSpaces=TRUE), row.names=TRUE)
+
+# Export the data frame to a CSV file
+write.csv(table1_NoWeight_df, "table1_NoWeight.csv", row.names = TRUE)
+
+
+```
+
+
+
+### TABLE 2: CONSULTED HEALTHCARE PROFESSIONAL
+
+```{r, cross-tab by sex}
+
+# Create the survey design object
+survey_design <- svydesign(~1, data = cchs20141, weights = ~WTS_M)
+
+# Define the variables to include in the table
+vars <- c( "sex", "age_group_20s_OG", "immigrant","cultural_racial_origin", "home_ownership", "marital_status", "education", "number_chronic_conditions",
+           "number_chronic_conditions_cat", "income_household", "employed_last_12_months", "regular_doctor_Yes","consult_family","consult_specialist", 
+           "consult_psychologist","consult_eye", "consult_dentist", "consult_chiropractor", "consult_physiotherapist")
+
+# Create the TableOne object
+table_two <- svyCreateTableOne(
+  vars = vars,
+  strata = c("unmet_12mo", "ibd"),
+  data = survey_design, #Using the weighted version
+  test = FALSE
+)
+
+# Print the table
+print(table_two, smd = TRUE)
+
+# Convert the TableOne object to a data frame
+table_two_df <- as.data.frame(print(table_two, smd=TRUE, showAllLevels=TRUE, quote=FALSE, noSpaces=TRUE), row.names=TRUE)
+
+# Export the data frame to a CSV file
+write.csv(table_two_df, "table2_WEIGHTED.csv", row.names = TRUE)
+
+
+####NON-WEIGHTED 
+
+# Create the TableOne objects
+table2_noW <- CreateTableOne(
+  vars = vars,
+  strata = c("unmet_12mo", "ibd"),
+  data = cchs20141, #Using the non-weighted version
+  test = FALSE
+)
+
+# Convert the TableOne object to a data frame
+table2_noW_df <- as.data.frame(print(table2_noW, smd=TRUE, showAllLevels=TRUE, quote=FALSE, noSpaces=TRUE), row.names=TRUE)
+
+# Export the data frame to a CSV file
+write.csv(table2_noW_df, "table2_NoWeights.csv", row.names = TRUE)
+
+```
+
+
+
+
+### CRUDE ASSOCIATION BETWEEN IBD AND UNMET NEEDS 
+
+```{r, assessing the crude associaiton between IBD and unmet needs}
+
+# Create the survey design object
+survey_design <- svydesign(~1, data = cchs20141, weights = ~WTS_M)
+
+#Crude logistic regression model of the association between 
+model_crude <- glm(unmet_12mo_binary ~ ibd, data=cchs20141, family=binomial)
+
+#Print the summary table of the crude model 
+summary(model_crude)
+
+#Create the confidence intervals of crude model 
+exp(cbind (odd_ratio = coef (model_crude), confint(model_crude) ) )
+
+```
+
+
+### ASSESSMENT OF MULTICOLLINEARITY 
+
+```{r, assessing the crude associaiton between IBD and unmet needs}
+
+#Subsetting the dataframe with relevant columns to assess for multicollinearity 
+myvars <- c("ibd","unmet_12mo_binary","sex", "age_group_20s", "immigrant","cultural_racial_origin", "home_ownership", "marital_status", "education", 
+            "number_chronic_conditions_cat", "income_household", "employed_last_12_months", "regular_doctor_Yes","consult_specialist", 
+           "consult_psychologist")
+cchs20141_temp <- cchs20141[myvars]
+
+# Fit a linear model
+model <- lm(unmet_12mo_binary ~ ., data = cchs20141_temp)  
+
+# Calculate VIF
+# We defined 2.5 as the threshold for multicollinearity
+vif_values <- vif(model)
+print(vif_values)
+
+```
+
+
+### MODEL 1: ADJUSTED ASSOCIATION BETWEEN IBD AND UNMET NEEDS 
+In this model we account for ...
+
+```{r, creating model 1}
+
+#build the model (adjusting for sex, age group, immigrant status, ethnicity, employment, number of chronic conditions)
+#model_1 <- glm(unmet_12mo_binary ~ ibd + sex + age_group_20s + immigrant + cultural_racial_origin + number_chronic_conditions, data=cchs20141, family=binomial)
+
+#Print the summary table of the crude model 
+#summary(model_1)
+
+#Create the confidence intervals of crude model 
+#exp(cbind (odd_ratio = coef (model_1), confint(model_1) ) )
+
+
+#USING A MIXED MODEL 
+cchs20141$immigrant <- factor(cchs20141$immigrant, levels = c("Non-immigrant", "Immigrant"))
+
+#Mixed_model_1 <- glmer(unmet_12mo_binary ~ ibd + sex + age_group_20s + immigrant + cultural_racial_origin + number_chronic_conditions_cat + marital_status + education 
+#                         + home_ownership + income_household + employed_last_12_months + (1 | GEODPMF), 
+#                       data = cchs20141, family = binomial, control =glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+Mixed_model_1 <- glmer(unmet_12mo_binary ~ ibd + sex + age_group_20s_OG + immigrant + cultural_racial_origin + number_chronic_conditions_cat + 
+                         income_household  + employed_last_12_months + education + marital_status + home_ownership + (1 | GEODPMF), 
+                       data = cchs20141, family = binomial, control =glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+#Print the summary of the model
+summary(Mixed_model_1)
+
+# table of OR (derived from esponentiaed estimates) with 95% CI
+se <- sqrt(diag(vcov(Mixed_model_1))) #Calculated the standard error
+tab_1 <- cbind(Est = fixef(Mixed_model_1), LL = fixef(Mixed_model_1) - 1.96 * se, UL = fixef(Mixed_model_1) + 1.96 *se)
+tab_1 <- exp(tab_1) #exponentiating the table
+print(round(tab_1, 2))
+
+#Assessing the impact of respondent's health region
+# Compute ICC
+icc_model_1 <- icc(Mixed_model_1)
+
+```
+
+
+### MODEL 2: ADJUSTED ASSOCIATION BETWEEN IBD AND UNMET NEEDS 
+In this model we account for ...
+
+```{r, creating model 2 }
+
+#build the model (adjusting for sex, age group, immigrant status, ethnicity, employment, number of chronic conditions)
+#model_2 <- glm(unmet_12mo_binary ~ ibd + sex + age_group_20s + immigrant + cultural_racial_origin + number_chronic_conditions + 
+#                 regular_doctor_Yes + consult_specialist + consult_psychologist,
+#               data=cchs20141, family=binomial)
+
+#Print the summary table of the crude model 
+#summary(model_2)
+
+#Create the confidence intervals of crude model 
+#exp(cbind (odd_ratio = coef (model_2), confint(model_2) ) )
+
+#USING A MIXED MODEL 
+
+Mixed_model_2 <- glmer(unmet_12mo_binary ~ ibd + sex + age_group_20s_OG + immigrant + cultural_racial_origin + number_chronic_conditions_cat + 
+                         marital_status + education + employed_last_12_months + 
+                         home_ownership + income_household  + regular_doctor_Yes + consult_specialist + consult_psychologist + (1 | GEODPMF), 
+                       data = cchs20141, family = binomial, control =glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+#Print the summary of the model
+summary(Mixed_model_2)
+
+# table of OR (derived from esponentiaed estimates) with 95% CI
+se <- sqrt(diag(vcov(Mixed_model_2))) #Calculated the standard error
+(tab_2 <- cbind(OR = fixef(Mixed_model_2), LL = fixef(Mixed_model_2) - 1.96 * se, UL = fixef(Mixed_model_2) + 1.96 *se))
+tab_2 <- exp(tab_2) #exponentiating the table
+print(round(tab_2, 2))
+
+#Assessing the impact of respondent's health region
+# Compute ICC
+icc_model_2 <- icc(Mixed_model_2)
+
+```
+
+
+### SENSITIVITY ANALYSIS 
+In the sensitivity analysis, we are evaluating the impact of self-reported mental health comorbidities.
+
+```{r, re-defining number of chronic conditinons}
+
+cchs20141 <- cchs20141 %>%
+   rowwise() %>%
+   mutate(number_chronic_conditions_SA =
+            sum(c_across(c(asthma,
+                           fibromyalgia,
+                           arthritis,
+                           back_problems,
+                           scoliosis,
+                           high_bp,
+                           migraine,
+                           copd,
+                           diabetes,
+                           stomach_ulcer,
+                           heart_disease,
+                           cancer,
+                           stroke,
+                           urinary_incontinence
+            ))=="Yes", na.rm = TRUE), 
+          
+       number_chronic_conditions_cat_SA = case_when(
+                  number_chronic_conditions == 0 ~ "0",
+                  number_chronic_conditions == 1 ~ "1",
+                  number_chronic_conditions >= 2 ~ "2 or more"
+          ))
+
+
+#Subsetting the dataframe with relevant columns to assess for multicollinearity 
+myvars <- c("ibd","unmet_12mo_binary","sex","age_group_20s","immigrant","cultural_racial_origin","number_chronic_conditions_SA","mood_anxiety",
+            "consult_family","consult_specialist","consult_psychologist")
+cchs20141_temp_SA <- cchs20141[myvars]
+
+# Fit a linear model
+model <- lm(unmet_12mo_binary ~ ., data = cchs20141_temp_SA)  # 'y' is the dependent variable
+
+# Calculate VIF
+# We defined 2.5 as the threshold for multicollinearity
+vif_values <- vif(model)
+print(vif_values)
+
+```
+
+###SENSITIVITY ANALYSIS: MODEL 1
+
+```{r, SENSITIVITY ANALYSIS: model 1}
+
+#build the model (adjusting for sex, age group, immigrant status, ethnicity, employment, number of chronic conditions)
+#model_1_SA <- glm(unmet_12mo_binary ~ ibd + sex + age_group_20s + immigrant + cultural_racial_origin + number_chronic_conditions_SA + mood_anxiety,
+#               data=cchs20141, family=binomial)
+
+#Print the summary table of the crude model 
+#summary(model_1_SA)
+
+#Create the confidence intervals of crude model 
+#exp(cbind (odd_ratio = coef (model_1_SA), confint(model_1_SA) ) )
+
+
+#USING A MIXED MODEL 
+
+Mixed_model_1_SA <- glmer(unmet_12mo_binary ~ ibd + sex + age_group_20s_OG + immigrant + cultural_racial_origin + number_chronic_conditions_cat_SA + marital_status + 
+                            education + home_ownership + income_household + employed_last_12_months + mood_anxiety + 
+                (1 | GEODPMF), data = cchs20141, family = binomial, control =glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+#Print the summary of the model
+summary(Mixed_model_1_SA)
+
+# table of OR (derived from esponentiaed estimates) with 95% CI
+se <- sqrt(diag(vcov(Mixed_model_1_SA))) #Calculated the standard error
+(tab_1_SA <- cbind(OR = fixef(Mixed_model_1_SA), LL = fixef(Mixed_model_1_SA) - 1.96 * se, UL = fixef(Mixed_model_1_SA) + 1.96 *se))
+tab_1_SA <- exp(tab_1_SA) #exponentiating the table
+print(round(tab_1_SA, 2))
+
+#Assessing the impact of respondent's health region
+# Compute ICC
+icc_model_1_SA <- icc(Mixed_model_1_SA)
+
+```
+
+###SENSITIVITY ANALYSIS: MODEL 2 
+
+```{r, SENSITIVITY ANALYSIS: model 2}
+
+#build the model (adjusting for sex, age group, immigrant status, ethnicity, employment, number of chronic conditions)
+#model_2_SA <- glm(unmet_12mo_binary ~ ibd + sex + age_group_20s + immigrant + cultural_racial_origin + number_chronic_conditions_SA + mood_anxiety + 
+#                 regular_doctor_Yes + consult_specialist + consult_psychologist,
+#               data= cchs20141, family=binomial)
+
+#Print the summary table of the crude model 
+#summary(model_2_SA)
+
+#Create the confidence intervals of crude model 
+#exp(cbind (odd_ratio = coef (model_2_SA), confint(model_2_SA) ) )
+
+#USING A MIXED MODEL 
+
+Mixed_model_2_SA <- glmer(unmet_12mo_binary ~ ibd + sex + age_group_20s_OG + immigrant + cultural_racial_origin + number_chronic_conditions_cat_SA + marital_status + 
+                            education + home_ownership + income_household + employed_last_12_months + mood_anxiety + regular_doctor_Yes + 
+                            consult_specialist + consult_psychologist + (1 | GEODPMF), data = cchs20141, family = binomial, 
+                          control =glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+#Print the summary of the model
+summary(Mixed_model_2_SA)
+
+# table of OR (derived from esponentiaed estimates) with 95% CI
+se <- sqrt(diag(vcov(Mixed_model_2_SA))) #Calculated the standard error
+(tab_2_SA <- cbind(OR = fixef(Mixed_model_2_SA), LL = fixef(Mixed_model_2_SA) - 1.96 * se, UL = fixef(Mixed_model_2_SA) + 1.96 *se))
+tab_2_SA <- exp(tab_2_SA) #exponentiating the table
+print(round(tab_2_SA, 2))
+
+#Assessing the impact of respondent's health region
+# Compute ICC
+icc_model_2_SA <- icc(Mixed_model_2_SA)
+
+
+
+```
+
+
+
+
+
+
